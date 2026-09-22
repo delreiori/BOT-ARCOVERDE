@@ -9,6 +9,10 @@ const ROTA = Array.from({ length: 40 }, (_, i) => [-23.4356 + (-23.5613 + 23.435
 let passo = 0
 const casos = {
   veiculo: async t => t === 'DEMO123456' ? { lat: ROTA[passo % ROTA.length][0], lon: ROTA[passo % ROTA.length][1], etaSeg: 900 - passo++ * 60 } : null,
+  veiculoMotorista: async t => t === 'MOTORISTA99' ? { lat: ROTA[passo % ROTA.length][0], lon: ROTA[passo % ROTA.length][1], etaSeg: 600 } : null,
+  paginaMotorista: async t => t === 'MOTORISTA99' ? { ...dados, rota: ROTA, paraMotorista: true, token: 'DEMO123456', tokenMotorista: t, statusTexto: 'Motorista indo até você' } : null,
+  chatMotoristaListar: async (t, depois) => t === 'MOTORISTA99' ? { motoristaId: '1', status: 'Motorista indo até você', mensagens: msgs.filter(m => m.id > depois) } : null,
+  chatMotoristaEnviar: async (t, texto) => { msgs.push({ id: msgs.length + 1, origem: 'MOTORISTA', texto: String(texto).trim(), criado_em: new Date().toISOString() }); return 'ok' },
   paginaRastreio: async t => t === 'DEMO123456' ? { ...dados, rota: ROTA, token: t, statusTexto: 'Motorista indo até você' }
     : t === 'BUSCA12345' ? { ...dados, rota: ROTA, motorista: null, token: t, statusTexto: 'Buscando motorista' } : null,
   fotoMotorista: async t => t === 'DEMO123456' ? { tipo: 'image/svg+xml', bytes: Buffer.from(FOTO) } : null,

@@ -1,5 +1,5 @@
 // Regras puras: nada aqui fala com rede ou banco.
-import { randomBytes } from 'node:crypto'
+import { randomBytes, createHmac } from 'node:crypto'
 
 // Autocab manda "11 99999-9999", "011...", "+55 ..."; Evolution manda "5511999999999".
 export function normalizarTelefone(bruto) {
@@ -19,6 +19,14 @@ export function chaveTelefone(tel) {
 const ABC = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
 export const gerarToken = () => Array.from(randomBytes(10), b => ABC[b % 62]).join('')
 
+// Link do motorista: derivado do token da corrida com o segredo do servidor.
+// Assim não precisa de coluna nova no banco, e quem tem o link do passageiro não consegue
+// descobrir o do motorista (nem se passar por ele no chat).
+export function tokenMotorista(token, segredo) {
+  const h = createHmac('sha256', String(segredo)).update(`motorista:${token}`).digest()
+  return Array.from(h.subarray(0, 10), b => ABC[b % 62]).join('')
+}
+
 const primeiroNome = nome => String(nome ?? '').trim().split(/\s+/)[0]
 
 export const textoBoasVindas = ({ nome, link }) =>
@@ -35,9 +43,15 @@ export function respostaAoPassageiro(texto) {
   return PREFIXO.test(t) ? t.replace(PREFIXO, '').trim() || null : null
 }
 
-export const textoInstrucaoMotorista = ({ nome, booking }) =>
-  `Corrida ${booking}${nome ? ` · ${nome}` : ''}: o passageiro está no chat de rastreio. ` +
-  `Para responder a ele, comece a mensagem com P: (exemplo: P: chego em 5 minutos). ` +
+export const textoInstrucaoMotorista = ({ nome, booking, link }) =>
+  `🚖 Corrida ${booking}${nome ? ` · passageiro ${primeiroNome(nome)}` : ''}
+
+` +
+  `Fale com o passageiro por aqui:
+${link}
+
+` +
+  `Pelo PDA também dá: comece a mensagem com P: (exemplo: P: chego em 5 minutos). ` +
   `Mensagens sem P: vão só para a central.`
 
 // Status do Autocab (activeBooking.status) em texto para o passageiro. Sem motorista = buscando.

@@ -121,6 +121,12 @@ export function criarAutocab({ chave }) {
       return { bytes, tipo: bytes[0] === 0x89 && bytes[1] === 0x50 ? 'image/png' : 'image/jpeg' }
     },
 
+    // Celular do motorista no cadastro, para mandar o link do chat pelo WhatsApp.
+    async celularMotorista(motoristaId) {
+      const { mobile, telephone } = await req(`${BOOKING}/drivers/${encodeURIComponent(motoristaId)}`)
+      return mobile || telephone || null
+    },
+
     // "Send Message to Vehicle(s)" (vehicle.yaml): cai na caixa de mensagens da central dentro do PDA.
     // (O /driver/v1/textmessage manda SMS para o celular do motorista, não serve aqui.)
     async enviarAoVeiculo(veiculoId, texto) {

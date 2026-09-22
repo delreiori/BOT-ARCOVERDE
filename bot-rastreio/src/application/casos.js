@@ -13,10 +13,10 @@
 //           mensagens(corridaId, depoisDoId) -> [{ id, origem, texto, criado_em }]
 import {
   normalizarTelefone, gerarToken, textoBoasVindas, paraMotorista, corridaDoTelefone, statusParaPassageiro,
-  respostaAoPassageiro, textoInstrucaoMotorista,
+  respostaAoPassageiro, textoInstrucaoMotorista, tokenMotorista,
 } from '../domain/corrida.js'
 
-export function criarCasos({ autocab, whatsapp, repo, baseUrl, log = console }) {
+export function criarCasos({ autocab, whatsapp, repo, baseUrl, segredo, log = console }) {
   // Estado vivo de cada corrida ativa, atualizado a cada ciclo: status do Autocab e desde quando o motorista atual
   // está nela (mensagens dele anteriores a isso não são desta corrida).
   // ponytail: em memória, vale para 1 instância; após reiniciar, volta em 1 ciclo (e ignora msgs do período parado).
@@ -94,14 +94,74 @@ export function criarCasos({ autocab, whatsapp, repo, baseUrl, log = console }) 
   // ponytail: o controle de "já avisei" é em memória; após reiniciar o bot, o aviso pode repetir uma vez.
   async function instruirMotorista(c, d) {
     const e = estado.get(c.id) ?? {}
-    if (!d.veiculoId || e.avisado === d.veiculoId) return
-    try {
-      await autocab.enviarAoVeiculo(d.veiculoId, textoInstrucaoMotorista({ nome: d.nome, booking: c.autocab_booking }))
-      e.avisado = d.veiculoId
-      estado.set(c.id, e)
-    } catch (erro) {
-      log.error(`corrida ${c.autocab_booking}: falha ao instruir o veículo ${d.veiculoId}:`, erro.message)
+    const marca = `${d.veiculoId}:${d.motorista?.id}`
+    if (e.avisado === marca) return
+    e.avisado = marca
+    estado.set(c.id, e)
+    const texto = textoInstrucaoMotorista({
+      nome: c.nome_cliente ?? d.nome, booking: c.autocab_booking, link: `${baseUrl}/m/${tokenMotorista(c.token, segredo)}`,
+    })
+
+    if (d.motorista?.id) {
+      try {
+        const celular = normalizarTelefone(await autocab.celularMotorista(d.motorista.id))
+        if (!celular) throw new Error('motorista sem celular no cadastro do Autocab')
+        await whatsapp.enviar(celular, texto)
+        log.info(`corrida ${c.autocab_booking}: link do chat enviado ao motorista ${d.motorista.id}`)
+      } catch (erro) {
+        log.error(`corrida ${c.autocab_booking}: falha ao mandar o link ao motorista:`, erro.message)
+      }
     }
+    if (d.veiculoId) {
+      await autocab.enviarAoVeiculo(d.veiculoId, texto)
+        .catch(erro => log.error(`corrida ${c.autocab_booking}: falha ao avisar o veículo:`, erro.message))
+    }
+  }
+
+  // Lado do motorista: mesmo chat da corrida, aberto por um token derivado do token do passageiro.
+  async function corridaDoMotorista(tokenM) {
+    for (const c of await repo.ativas()) if (tokenMotorista(c.token, segredo) === tokenM) return c
+    return null
+  }
+
+  async function paginaMotorista(tokenM) {
+    const c = await corridaDoMotorista(tokenM)
+    if (!c) return null
+    const d = await autocab.detalhes(c.autocab_booking)
+    return {
+      ...d,
+      paraMotorista: true,
+      token: c.token,
+      tokenMotorista: tokenM,
+      statusTexto: estado.get(c.id)?.status ?? statusParaPassageiro(d.status, Boolean(c.motorista_id)),
+      rota: await rotaDaCorrida(c, d),
+    }
+  }
+
+  async function chatMotoristaListar(tokenM, depois = 0) {
+    const c = await corridaDoMotorista(tokenM)
+    if (!c) return null
+    return {
+      motoristaId: c.motorista_id ?? null,
+      status: estado.get(c.id)?.status ?? '',
+      mensagens: await repo.mensagens(c.id, depois),
+    }
+  }
+
+  async function veiculoMotorista(tokenM) {
+    const c = await corridaDoMotorista(tokenM)
+    if (!c) return null
+    const pos = await autocab.localizacaoVeiculo(c.autocab_booking)
+    return pos ? { ...pos, etaSeg: await eta(c, pos) } : null
+  }
+
+  async function chatMotoristaEnviar(tokenM, texto) {
+    texto = String(texto ?? '').trim().slice(0, 500)
+    const c = await corridaDoMotorista(tokenM)
+    if (!c) return 'encerrada'
+    if (!texto) return 'vazia'
+    await repo.salvarMensagem({ corridaId: c.id, origem: 'MOTORISTA', texto, externoId: `web:${gerarToken()}` })
+    return 'ok'
   }
 
   // Motorista -> passageiro: só o que ele prefixar com "P:"; o resto é conversa com a central.
@@ -223,5 +283,6 @@ export function criarCasos({ autocab, whatsapp, repo, baseUrl, log = console }) 
 
   return {
     sincronizarCorridas, repassarMensagensMotoristas, mensagemPassageiro, chatEnviar, chatListar, fotoMotorista, veiculo, paginaRastreio,
+    paginaMotorista, chatMotoristaListar, chatMotoristaEnviar, veiculoMotorista,
   }
 }
