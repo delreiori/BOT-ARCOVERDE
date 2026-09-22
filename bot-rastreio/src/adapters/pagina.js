@@ -2,6 +2,7 @@
 // Layout: saudação + miniatura do MobilyTrack (toque = tela cheia) + status no topo; chat ocupa o resto.
 
 const TZ = process.env.TZ || 'America/Sao_Paulo'
+const primeiroNome = t => String(t ?? '').split(',')[0].trim()
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`)
 const hora = iso => new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: TZ }).format(new Date(iso))
 function saudacao(agora = new Date()) {
@@ -135,7 +136,7 @@ const hora = iso => new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit',
 function adicionar(m) {
   document.getElementById('sem-msgs')?.remove()
   const b = document.createElement('div')
-  b.className = 'bolha ' + (m.origem === 'CLIENTE' ? 'eu' : 'ele')
+  b.className = 'bolha ' + (m.origem === '__EU__' ? 'eu' : 'ele')
   b.textContent = m.texto
   const t = document.createElement('time')
   t.textContent = hora(m.criado_em)
@@ -150,7 +151,7 @@ async function carregar() {
     if (r.status === 404) return location.reload() // corrida encerrada
     if (!r.ok) return
     const { motoristaId, status, mensagens } = await r.json()
-    if ((motoristaId ?? '') !== document.body.dataset.motorista) return location.reload() // reatribuição
+    if ('__EU__' === 'CLIENTE' && (motoristaId ?? '') !== document.body.dataset.motorista) return location.reload()
     document.getElementById('status-texto').textContent = status
     mensagens.forEach(adicionar)
     if (mensagens.length) lista.scrollTop = lista.scrollHeight
@@ -293,9 +294,13 @@ export function renderPagina(d, { agora } = {}) {
 <p class="ola">${primeiro ? `Obrigado, ${esc(primeiro)}! ` : 'Obrigado! '}Esperamos você na próxima viagem.</p></section>` })
   }
 
+  const paraMotorista = Boolean(d.paraMotorista)
   const m = d.motorista ?? {}
-  const buscando = !m.id // central retirou o motorista e ainda não designou outro
+  const buscando = !paraMotorista && !m.id // central retirou o motorista e ainda não designou outro
   const nomeMotorista = buscando ? 'Buscando motorista' : m.nome || 'Motorista'
+  // no lado do motorista, o "outro lado" da conversa é o passageiro
+  const outro = paraMotorista ? (String(d.nome ?? '').trim() || 'Passageiro') : nomeMotorista
+  const base = paraMotorista ? `/m/${esc(d.tokenMotorista)}` : `/r/${esc(d.token)}`
   const temMapa = Boolean(d.origemCoord || d.destinoCoord)
   const dadosMapa = { rota: d.rota, origem: d.origemCoord, destino: d.destinoCoord }
   const mapa = temMapa
@@ -311,9 +316,12 @@ export function renderPagina(d, { agora } = {}) {
 <div class="mapa"><div class="sem-mapa">${ICONE_PINO}Disponível em instantes</div></div>`
 
   const info = [
-    `<dt>Motorista</dt><dd>${buscando ? 'Buscando motorista…' : esc(nomeMotorista)}</dd>`,
-    !buscando && d.veiculo && `<dt>Veículo</dt><dd>${esc(d.veiculo)}</dd>`,
-    !buscando && d.placa && `<dt>Placa</dt><dd class="placa">${esc(d.placa)}</dd>`,
+    paraMotorista
+      ? `<dt>Passageiro</dt><dd>${esc(outro)}</dd>`
+      : `<dt>Motorista</dt><dd>${buscando ? 'Buscando motorista…' : esc(nomeMotorista)}</dd>`,
+    !paraMotorista && !buscando && d.veiculo && `<dt>Veículo</dt><dd>${esc(d.veiculo)}</dd>`,
+    !paraMotorista && !buscando && d.placa && `<dt>Placa</dt><dd class="placa">${esc(d.placa)}</dd>`,
+    paraMotorista && d.origem && `<dt>Embarque</dt><dd>${esc(d.origem)}</dd>`,
   ].filter(Boolean).join('')
 
   const trajeto = [
@@ -324,9 +332,10 @@ export function renderPagina(d, { agora } = {}) {
   const corpo = `
 <section class="topo">
   <div class="saudacao">
-    <h1>${saudacao(agora)},${primeiro ? `<em>${esc(primeiro)}</em>` : ''}</h1>
+    <h1>${paraMotorista ? `Corrida <em>${esc(d.origem ? primeiroNome(d.origem) : 'em andamento')}</em>`
+      : `${saudacao(agora)},${primeiro ? `<em>${esc(primeiro)}</em>` : ''}`}</h1>
     <dl class="info">${info}</dl>
-    ${d.link && !buscando ? `<button class="compartilhar" id="compartilhar" type="button" data-url="${esc(d.link)}"
+    ${d.link && !buscando && !paraMotorista ? `<button class="compartilhar" id="compartilhar" type="button" data-url="${esc(d.link)}"
       data-texto="${esc(textoCompartilhar(d, nomeMotorista))}">${ICONE_COMPARTILHAR}<span>Compartilhar viagem</span></button>` : ''}
   </div>
   <div class="lado">
@@ -338,22 +347,25 @@ export function renderPagina(d, { agora } = {}) {
 <section class="card chat" aria-label="Chat com o motorista">
   <div class="chat-topo">
     <div class="avatar">
-      <span aria-hidden="true">${buscando ? '…' : esc(nomeMotorista[0].toUpperCase())}</span>
-      ${d.token && !buscando ? `<img src="/r/${esc(d.token)}/foto" alt="Foto de ${esc(nomeMotorista)}" onerror="this.remove()">` : ''}
+      <span aria-hidden="true">${buscando ? '…' : esc(outro[0].toUpperCase())}</span>
+      ${d.token && !buscando && !paraMotorista ? `<img src="/r/${esc(d.token)}/foto" alt="Foto de ${esc(nomeMotorista)}" onerror="this.remove()">` : ''}
     </div>
-    <div><div class="nome">${esc(nomeMotorista)}</div><small><i class="ponto"></i>${buscando ? 'A central está designando um motorista' : 'Mensagens via central'}</small></div>
+    <div><div class="nome">${esc(outro)}</div><small><i class="ponto"></i>${
+      buscando ? 'A central está designando um motorista' : paraMotorista ? 'Chat da corrida' : 'Mensagens via central'}</small></div>
   </div>
   ${trajeto ? `<details class="perfil"><summary>Ver trajeto</summary><dl>${trajeto}</dl></details>` : ''}
   <div class="msgs" id="msgs" aria-live="polite">
-    <p class="sem-msgs" id="sem-msgs">${buscando ? 'O chat fica disponível assim que o motorista for designado.' : 'Envie uma mensagem para o motorista. Ela chega no aparelho dele pela central.'}</p>
+    <p class="sem-msgs" id="sem-msgs">${buscando ? 'O chat fica disponível assim que o motorista for designado.'
+      : paraMotorista ? 'Fale com o passageiro por aqui. Ele acompanha pelo link de rastreio.'
+      : 'Envie uma mensagem para o motorista. Ela chega no aparelho dele pela central.'}</p>
   </div>
   <p class="aviso" id="aviso" role="alert"></p>
   <form class="envio" id="envio" autocomplete="off">
-    <input name="texto" maxlength="500" placeholder="${buscando ? 'Aguardando motorista…' : 'Digite sua mensagem…'}"
+    <input name="texto" maxlength="500" placeholder="${buscando ? 'Aguardando motorista…' : paraMotorista ? 'Mensagem ao passageiro…' : 'Digite sua mensagem…'}"
       aria-label="Mensagem para o motorista" enterkeyhint="send"${buscando ? ' disabled' : ''}>
     <button type="submit" aria-label="Enviar"${buscando ? ' disabled' : ''}>${ICONE_ENVIAR}</button>
   </form>
 </section>`
 
-  return layout({ corpo, script: JS, motorista: m.id ?? '' })
+  return layout({ corpo, script: JS.replace('__EU__', paraMotorista ? 'MOTORISTA' : 'CLIENTE'), motorista: m.id ?? '' })
 }

@@ -59,6 +59,7 @@ function montar() {
     msgs: [],
     mensagensMotoristas: async () => autocab.msgs,
     enviarAoVeiculo: async (id, t) => aoMotorista.push([id, t]),
+    celularMotorista: async () => '11 98888-7777',
   }
   const repo = {
     bookingsExistentes: async ids => new Set(corridas.filter(c => ids.includes(c.autocab_booking)).map(c => c.autocab_booking)),
@@ -78,7 +79,7 @@ function montar() {
   }
   const whatsapp = { enviar: async (tel, txt) => { if (falharWhats) throw new Error('offline'); enviados.push([tel, txt]) } }
   const log = { info() {}, error() {} }
-  const casos = criarCasos({ autocab, whatsapp, repo, baseUrl: 'https://bot', log })
+  const casos = criarCasos({ autocab, whatsapp, repo, baseUrl: 'https://bot', segredo: 'segredo-do-servidor', log })
   return { casos, autocab, booking, corridas, mensagens, enviados, aoMotorista, falhar: v => { falharWhats = v } }
 }
 
@@ -96,7 +97,7 @@ test('fluxo completo', async () => {
   t.falhar(false)
   await t.casos.sincronizarCorridas()
   await t.casos.sincronizarCorridas() // segundo ciclo não duplica
-  assert.equal(t.enviados.length, 1)
+  assert.equal(t.enviados.length, 2, 'um WhatsApp para o passageiro e um para o motorista')
   const [tel, txt] = t.enviados[0]
   assert.equal(tel, '5511999998888')
   assert.match(txt, /^Olá Ana!/)
@@ -106,8 +107,10 @@ test('fluxo completo', async () => {
   const msg = { telefone: '551199998888', texto: 'estou no portão 2', externoId: 'wa:1' }
   await t.casos.mensagemPassageiro(msg)
   await t.casos.mensagemPassageiro(msg)
-  // o motorista recebe a instrução de como responder, e depois a mensagem do passageiro
-  assert.match(t.aoMotorista[0][1], /comece a mensagem com P:/)
+  // o motorista recebe o link do chat (WhatsApp + PDA) e depois a mensagem do passageiro
+  assert.match(t.aoMotorista[0][1], /Fale com o passageiro por aqui:\nhttps:\/\/bot\/m\//)
+  assert.match(t.enviados[1][1], /https:\/\/bot\/m\//) // WhatsApp do motorista
+  assert.equal(t.enviados[1][0], '5511988887777')
   assert.deepEqual(t.aoMotorista.slice(1), [['77', 'Cliente: "estou no portão 2"']])
 
   // motorista -> passageiro; mensagem antiga (antes da corrida) e de outro motorista ignoradas
@@ -119,9 +122,19 @@ test('fluxo completo', async () => {
   ]
   await t.casos.repassarMensagensMotoristas()
   await t.casos.repassarMensagensMotoristas()
-  assert.deepEqual(t.enviados.slice(1), [], 'mensagem do motorista não vai para o WhatsApp, só para o chat')
+  assert.equal(t.enviados.length, 2, 'mensagem do motorista não vira WhatsApp: só o chat')
   assert.deepEqual((await t.casos.chatListar(t.corridas[0].token)).mensagens.map(m => m.texto),
     ['estou no portão 2', 'chego em 3 min'])
+
+  // página do motorista: mesmo chat, token derivado, e o que ele envia vira mensagem MOTORISTA
+  const tokenM = t.enviados[1][1].match(/\/m\/([0-9A-Za-z]+)/)[1]
+  assert.notEqual(tokenM, t.corridas[0].token)
+  assert.equal(await t.casos.chatMotoristaEnviar(tokenM, 'chego já'), 'ok')
+  assert.equal(await t.casos.chatMotoristaEnviar('naoexiste0', 'oi'), 'encerrada')
+  const htmlM = renderPagina(await t.casos.paginaMotorista(tokenM))
+  assert.match(htmlM, /Passageiro/)
+  assert.doesNotMatch(htmlM, /id="compartilhar"/) // motorista não compartilha a viagem
+  assert.equal((await t.casos.chatMotoristaListar(tokenM)).mensagens.at(-1).texto, 'chego já')
 
   // página
   const dados = await t.casos.paginaRastreio(t.corridas[0].token)
@@ -158,9 +171,9 @@ test('fluxo completo', async () => {
   assert.deepEqual(t.aoMotorista.at(-1), ['77', 'Cliente: "já desci"'])
   const conversa = (await t.casos.chatListar(token)).mensagens
   assert.deepEqual(conversa.map(m => [m.origem, m.texto]), [
-    ['CLIENTE', 'estou no portão 2'], ['MOTORISTA', 'chego em 3 min'], ['CLIENTE', 'já desci'],
+    ['CLIENTE', 'estou no portão 2'], ['MOTORISTA', 'chego em 3 min'], ['MOTORISTA', 'chego já'], ['CLIENTE', 'já desci'],
   ])
-  assert.equal((await t.casos.chatListar(token, conversa[1].id)).mensagens.length, 1)
+  assert.equal((await t.casos.chatListar(token, conversa[1].id)).mensagens.length, 2) // só as posteriores
 
   // status vem do Autocab e muda sem mensagem nova no WhatsApp
   const whatsAntes = t.enviados.length
@@ -194,7 +207,10 @@ test('fluxo completo', async () => {
     { id: 12, motoristaId: 42, texto: 'do antigo', recebidaEm: depois },
   )
   await t.casos.repassarMensagensMotoristas()
-  assert.deepEqual(t.enviados.slice(whatsAntes), [], 'nenhum WhatsApp após a reatribuição')
+  const novos = t.enviados.slice(whatsAntes)
+  assert.deepEqual(novos.filter(e => e[0] === '5511999998888'), [], 'passageiro não recebe WhatsApp na reatribuição')
+  assert.match(novos.at(-1)[1], /Fale com o passageiro por aqui/) // o motorista novo recebe o link do chat
+  assert.equal(novos.at(-1)[0], '5511988887777')
   assert.equal((await t.casos.chatListar(token)).mensagens.at(-1).texto, 'sou o Bruno, a caminho')
   assert.equal(await t.casos.chatEnviar(token, 'oi Bruno'), 'ok')
   assert.deepEqual(t.aoMotorista.at(-1), ['77', 'Cliente: "oi Bruno"'])
