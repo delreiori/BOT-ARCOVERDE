@@ -5,11 +5,18 @@ const HORA = 3600e3
 
 export function criarAutocab({ chave }) {
   async function req(url, opts = {}) {
-    const r = await fetch(url, {
-      ...opts,
-      headers: { 'Ocp-Apim-Subscription-Key': chave, 'Content-Type': 'application/json' },
-      signal: AbortSignal.timeout(15000),
-    })
+    const inicio = Date.now()
+    let r
+    try {
+      r = await fetch(url, {
+        ...opts,
+        headers: { 'Ocp-Apim-Subscription-Key': chave, 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(30000),
+      })
+    } catch (e) {
+      // o erro do fetch não diz qual rota foi; sem isso o log só mostra "aborted due to timeout"
+      throw new Error(`Autocab sem resposta em ${Math.round((Date.now() - inicio) / 1000)}s ${url}: ${e.message}`)
+    }
     if (!r.ok) throw new Error(`Autocab ${r.status} ${url}: ${(await r.text()).slice(0, 200)}`)
     return r.json()
   }
@@ -28,7 +35,8 @@ export function criarAutocab({ chave }) {
           exactMatch: false, ignorePostcode: true, ignoreTown: true,
         }),
       })
-      return bookings
+      // sem telefone não há para quem mandar o link: nem busca os detalhes a cada ciclo
+      return bookings.filter(b => String(b.telephoneNumber ?? '').replace(/\D/g, '').length >= 10)
     },
 
     async detalhes(id) {
