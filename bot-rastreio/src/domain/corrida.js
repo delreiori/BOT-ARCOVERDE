@@ -27,6 +27,19 @@ export const textoBoasVindas = ({ nome, link }) =>
 
 export const paraMotorista = texto => `Cliente: "${texto}"`
 
+// A caixa do PDA é a mesma do call center. Só é do passageiro o que o motorista prefixar com "P:".
+// Aceita P:, p -, passageiro:, cliente: — tudo sem diferenciar maiúsculas.
+const PREFIXO = /^\s*(p|passageiro|cliente)\s*[:\-]\s*/i
+export function respostaAoPassageiro(texto) {
+  const t = String(texto ?? '')
+  return PREFIXO.test(t) ? t.replace(PREFIXO, '').trim() || null : null
+}
+
+export const textoInstrucaoMotorista = ({ nome, booking }) =>
+  `Corrida ${booking}${nome ? ` · ${nome}` : ''}: o passageiro está no chat de rastreio. ` +
+  `Para responder a ele, comece a mensagem com P: (exemplo: P: chego em 5 minutos). ` +
+  `Mensagens sem P: vão só para a central.`
+
 // Status do Autocab (activeBooking.status) em texto para o passageiro. Sem motorista = buscando.
 // ponytail: a doc não lista os valores de status; traduz por palavra-chave e mostra o resto como veio.
 // Ajustar a lista quando virmos os valores reais nos logs.

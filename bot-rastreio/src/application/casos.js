@@ -13,6 +13,7 @@
 //           mensagens(corridaId, depoisDoId) -> [{ id, origem, texto, criado_em }]
 import {
   normalizarTelefone, gerarToken, textoBoasVindas, paraMotorista, corridaDoTelefone, statusParaPassageiro,
+  respostaAoPassageiro, textoInstrucaoMotorista,
 } from '../domain/corrida.js'
 
 export function criarCasos({ autocab, whatsapp, repo, baseUrl, log = console }) {
@@ -60,6 +61,7 @@ export function criarCasos({ autocab, whatsapp, repo, baseUrl, log = console }) 
     try {
       await whatsapp.enviar(telefone, textoBoasVindas({ nome: d.nome, link: `${baseUrl}/r/${corrida.token}` }))
       log.info(`corrida ${id}: link enviado`)
+      await instruirMotorista(corrida, d)
     } catch (e) {
       await repo.apagarCorrida(corrida.id) // não perde a corrida: próximo ciclo tenta enviar de novo
       throw e
@@ -76,6 +78,7 @@ export function criarCasos({ autocab, whatsapp, repo, baseUrl, log = console }) 
       c.motorista_id = novo
       desde = new Date()
       log.info(`corrida ${c.autocab_booking}: motorista ${novo ?? 'retirado, buscando outro'}`)
+      if (novo) await instruirMotorista(c, d) // motorista novo também precisa saber como responder
     }
     const e = estado.get(c.id) ?? {} // mantém a rota já calculada
     e.status = statusParaPassageiro(d.status, Boolean(novo))
@@ -87,7 +90,21 @@ export function criarCasos({ autocab, whatsapp, repo, baseUrl, log = console }) 
     return e
   }
 
-  // Motorista -> passageiro: o que o motorista manda para a central entra só no chat da página, não no WhatsApp.
+  // Avisa o veículo de que existe um passageiro no chat e como responder a ele.
+  // ponytail: o controle de "já avisei" é em memória; após reiniciar o bot, o aviso pode repetir uma vez.
+  async function instruirMotorista(c, d) {
+    const e = estado.get(c.id) ?? {}
+    if (!d.veiculoId || e.avisado === d.veiculoId) return
+    try {
+      await autocab.enviarAoVeiculo(d.veiculoId, textoInstrucaoMotorista({ nome: d.nome, booking: c.autocab_booking }))
+      e.avisado = d.veiculoId
+      estado.set(c.id, e)
+    } catch (erro) {
+      log.error(`corrida ${c.autocab_booking}: falha ao instruir o veículo ${d.veiculoId}:`, erro.message)
+    }
+  }
+
+  // Motorista -> passageiro: só o que ele prefixar com "P:"; o resto é conversa com a central.
   async function repassarMensagensMotoristas() {
     const ativas = await repo.ativas()
     if (!ativas.length) return
@@ -95,8 +112,10 @@ export function criarCasos({ autocab, whatsapp, repo, baseUrl, log = console }) 
 
     for (const m of await autocab.mensagensMotoristas()) {
       const c = porMotorista.get(String(m.motoristaId))
-      if (!c || !m.texto || m.recebidaEm < desdeDe(c)) continue
-      await repo.salvarMensagem({ corridaId: c.id, origem: 'MOTORISTA', texto: m.texto, externoId: `autocab:${m.id}` })
+      if (!c || m.recebidaEm < desdeDe(c)) continue
+      const texto = respostaAoPassageiro(m.texto)
+      if (!texto) continue // mensagem para a central, não para o passageiro
+      await repo.salvarMensagem({ corridaId: c.id, origem: 'MOTORISTA', texto, externoId: `autocab:${m.id}` })
     }
   }
 
