@@ -55,7 +55,9 @@ letter-spacing:.04em;color:var(--acento-texto)}
 .mapa{position:relative;width:124px;height:124px;border-radius:18px;overflow:hidden;border:1px solid var(--borda);
 background:#1c1c1c;box-shadow:var(--brilho)}
 /* miniatura = MobilyTrack renderizado em 320px e reduzido; ao expandir volta ao tamanho real */
-.mapa-tela{width:100%;height:100%;background:#1c1c1c}
+.mapa-tela{width:100%;height:100%;background:#0f0f0f}
+/* modo noturno do mapa: inverte e dessatura os tiles; o trajeto e os marcadores ficam por cima, sem filtro */
+.mapa-tela .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.92) contrast(.95) saturate(.55)}
 .mapa-tela .leaflet-control-attribution{font-size:9px;background:rgba(0,0,0,.6);color:var(--suave)}
 .mapa-tela .leaflet-control-attribution a{color:var(--suave)}
 .carro{display:grid;place-items:center;width:26px;height:26px;border-radius:50%;font-size:15px;
@@ -185,14 +187,15 @@ const dados = document.getElementById('dados-mapa')
 if (abrir && dados && window.L) {
   const { rota, origem, destino } = JSON.parse(dados.textContent)
   const mapa = L.map('mapa', { zoomControl: false, attributionControl: true })
+  // OpenStreetMap (sem chave) escurecido por filtro CSS, para combinar com a página
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(mapa)
 
   const pontos = []
   if (rota && rota.length > 1) {
-    L.polyline(rota, { color: '#d32f2f', weight: 5, opacity: .9 }).addTo(mapa)
+    L.polyline(rota, { color: '#ff3b30', weight: 5, opacity: .95 }).addTo(mapa)
     pontos.push(...rota)
   } else if (origem && destino) { // OSRM fora do ar: liga os dois pontos em linha tracejada
-    L.polyline([[origem.lat, origem.lon], [destino.lat, destino.lon]], { color: '#d32f2f', weight: 3, dashArray: '6 8' }).addTo(mapa)
+    L.polyline([[origem.lat, origem.lon], [destino.lat, destino.lon]], { color: '#ff3b30', weight: 3, dashArray: '6 8' }).addTo(mapa)
   }
   const ponta = (p, cor, titulo) => {
     if (!p) return
@@ -201,7 +204,7 @@ if (abrir && dados && window.L) {
     pontos.push([p.lat, p.lon])
   }
   ponta(origem, '#fff', 'Embarque')
-  ponta(destino, '#d32f2f', 'Destino')
+  ponta(destino, '#ff3b30', 'Destino')
   if (pontos.length) mapa.fitBounds(L.latLngBounds(pontos).pad(.25))
   else mapa.setView([-14.24, -51.93], 3)
 
@@ -229,8 +232,14 @@ if (abrir && dados && window.L) {
   posicao()
   setInterval(posicao, 10000)
 
-  abrir.onclick = () => { document.body.classList.add('mapa-aberto'); mapa.invalidateSize(); if (pontos.length) mapa.fitBounds(L.latLngBounds(pontos).pad(.15)); fechar.focus() }
-  fechar.onclick = () => { document.body.classList.remove('mapa-aberto'); mapa.invalidateSize(); abrir.focus() }
+  // o mapa só sabe o novo tamanho depois que o navegador aplica o layout: por isso o requestAnimationFrame
+  const reenquadrar = () => requestAnimationFrame(() => {
+    mapa.invalidateSize()
+    const tudo = carro ? [...pontos, carro.getLatLng()] : pontos
+    if (tudo.length) mapa.fitBounds(L.latLngBounds(tudo).pad(.15))
+  })
+  abrir.onclick = () => { document.body.classList.add('mapa-aberto'); reenquadrar(); fechar.focus() }
+  fechar.onclick = () => { document.body.classList.remove('mapa-aberto'); reenquadrar(); abrir.focus() }
   addEventListener('keydown', e => { if (e.key === 'Escape' && document.body.classList.contains('mapa-aberto')) fechar.click() })
 }
 

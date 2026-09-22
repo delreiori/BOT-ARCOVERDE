@@ -12,7 +12,7 @@
 //           salvarMensagem(m) -> bool (false = duplicada), apagarMensagem(externoId),
 //           mensagens(corridaId, depoisDoId) -> [{ id, origem, texto, criado_em }]
 import {
-  normalizarTelefone, gerarToken, textoBoasVindas, paraMotorista, paraPassageiro, corridaDoTelefone, statusParaPassageiro,
+  normalizarTelefone, gerarToken, textoBoasVindas, paraMotorista, corridaDoTelefone, statusParaPassageiro,
 } from '../domain/corrida.js'
 
 export function criarCasos({ autocab, whatsapp, repo, baseUrl, log = console }) {
@@ -86,7 +86,7 @@ export function criarCasos({ autocab, whatsapp, repo, baseUrl, log = console }) 
     return e
   }
 
-  // Motorista -> passageiro: o que o motorista manda pelo PDA chega no chat e no WhatsApp como "Motorista: ...".
+  // Motorista -> passageiro: o que o motorista manda para a central entra só no chat da página, não no WhatsApp.
   async function repassarMensagensMotoristas() {
     const ativas = await repo.ativas()
     if (!ativas.length) return
@@ -95,14 +95,7 @@ export function criarCasos({ autocab, whatsapp, repo, baseUrl, log = console }) 
     for (const m of await autocab.mensagensMotoristas()) {
       const c = porMotorista.get(String(m.motoristaId))
       if (!c || !m.texto || m.recebidaEm < desdeDe(c)) continue
-      const externoId = `autocab:${m.id}`
-      if (!(await repo.salvarMensagem({ corridaId: c.id, origem: 'MOTORISTA', texto: m.texto, externoId }))) continue
-      try {
-        await whatsapp.enviar(c.telefone, paraPassageiro(m.texto))
-      } catch (e) {
-        await repo.apagarMensagem(externoId) // reenvia no próximo ciclo
-        log.error(`mensagem ${externoId}:`, e.message)
-      }
+      await repo.salvarMensagem({ corridaId: c.id, origem: 'MOTORISTA', texto: m.texto, externoId: `autocab:${m.id}` })
     }
   }
 
@@ -111,7 +104,12 @@ export function criarCasos({ autocab, whatsapp, repo, baseUrl, log = console }) 
   async function doCliente(c, texto, externoId) {
     if (!c.motorista_id) return log.info(`corrida ${c.autocab_booking}: mensagem sem motorista designado, ignorada`)
     if (!(await repo.salvarMensagem({ corridaId: c.id, origem: 'CLIENTE', texto, externoId }))) return
-    await autocab.enviarAoMotorista(c.motorista_id, paraMotorista(texto)).catch(e => log.error('envio ao motorista:', e.message))
+    try {
+      await autocab.enviarAoMotorista(c.motorista_id, paraMotorista(texto))
+      log.info(`corrida ${c.autocab_booking}: mensagem entregue ao motorista ${c.motorista_id}`)
+    } catch (e) {
+      log.error(`corrida ${c.autocab_booking}: falha ao enviar ao motorista ${c.motorista_id}:`, e.message)
+    }
   }
 
   // Chat da página. Retorna 'ok' | 'vazia' | 'encerrada' | 'sem-motorista'.

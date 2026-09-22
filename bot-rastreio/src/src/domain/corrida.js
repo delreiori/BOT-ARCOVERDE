@@ -26,7 +26,6 @@ export const textoBoasVindas = ({ nome, link }) =>
   `Acompanhe seu link de rastreio em tempo real e fale com o motorista:\n${link}`
 
 export const paraMotorista = texto => `Cliente: "${texto}"`
-export const paraPassageiro = texto => `🚗 Motorista: ${texto}`
 
 // Status do Autocab (activeBooking.status) em texto para o passageiro. Sem motorista = buscando.
 // ponytail: a doc não lista os valores de status; traduz por palavra-chave e mostra o resto como veio.

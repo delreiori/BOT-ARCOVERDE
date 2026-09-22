@@ -107,7 +107,9 @@ test('fluxo completo', async () => {
   ]
   await t.casos.repassarMensagensMotoristas()
   await t.casos.repassarMensagensMotoristas()
-  assert.deepEqual(t.enviados.slice(1), [['5511999998888', '🚗 Motorista: chego em 3 min']])
+  assert.deepEqual(t.enviados.slice(1), [], 'mensagem do motorista não vai para o WhatsApp, só para o chat')
+  assert.deepEqual((await t.casos.chatListar(t.corridas[0].token)).mensagens.map(m => m.texto),
+    ['estou no portão 2', 'chego em 3 min'])
 
   // página
   const dados = await t.casos.paginaRastreio(t.corridas[0].token)
@@ -180,7 +182,8 @@ test('fluxo completo', async () => {
     { id: 12, motoristaId: 42, texto: 'do antigo', recebidaEm: depois },
   )
   await t.casos.repassarMensagensMotoristas()
-  assert.deepEqual(t.enviados.slice(whatsAntes).map(e => e[1]), ['🚗 Motorista: sou o Bruno, a caminho'])
+  assert.deepEqual(t.enviados.slice(whatsAntes), [], 'nenhum WhatsApp após a reatribuição')
+  assert.equal((await t.casos.chatListar(token)).mensagens.at(-1).texto, 'sou o Bruno, a caminho')
   assert.equal(await t.casos.chatEnviar(token, 'oi Bruno'), 'ok')
   assert.deepEqual(t.aoMotorista.at(-1), ['77', 'Cliente: "oi Bruno"'])
 
