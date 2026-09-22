@@ -1,7 +1,7 @@
 // node --test : regras + fluxo completo com Autocab/WhatsApp/banco falsos em memória.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { normalizarTelefone, chaveTelefone, gerarToken, statusParaPassageiro } from './domain/corrida.js'
+import { normalizarTelefone, chaveTelefone, gerarToken, statusParaPassageiro, respostaAoPassageiro } from './domain/corrida.js'
 import { lerWebhook } from './adapters/evolution.js'
 import { criarCasos } from './application/casos.js'
 import { renderPagina } from './adapters/pagina.js'
@@ -23,6 +23,15 @@ test('status do Autocab para o passageiro', () => {
   assert.equal(statusParaPassageiro('DriverArrived', true), 'Motorista chegou')
   assert.equal(statusParaPassageiro('PassengerOnBoard', true), 'Em viagem')
   assert.equal(statusParaPassageiro('Algo Novo', true), 'Algo Novo') // desconhecido aparece como veio
+})
+
+test('só o que o motorista prefixa com P: é do passageiro', () => {
+  assert.equal(respostaAoPassageiro('P: chego em 5 min'), 'chego em 5 min')
+  assert.equal(respostaAoPassageiro('p - já estou na portaria'), 'já estou na portaria')
+  assert.equal(respostaAoPassageiro('Passageiro: ok'), 'ok')
+  assert.equal(respostaAoPassageiro('preciso falar com o escritório'), null) // conversa com a central
+  assert.equal(respostaAoPassageiro('Senha incorreta'), null)
+  assert.equal(respostaAoPassageiro('P:   '), null)
 })
 
 test('webhook evolution', () => {
@@ -97,11 +106,14 @@ test('fluxo completo', async () => {
   const msg = { telefone: '551199998888', texto: 'estou no portão 2', externoId: 'wa:1' }
   await t.casos.mensagemPassageiro(msg)
   await t.casos.mensagemPassageiro(msg)
-  assert.deepEqual(t.aoMotorista, [['77', 'Cliente: "estou no portão 2"']])
+  // o motorista recebe a instrução de como responder, e depois a mensagem do passageiro
+  assert.match(t.aoMotorista[0][1], /comece a mensagem com P:/)
+  assert.deepEqual(t.aoMotorista.slice(1), [['77', 'Cliente: "estou no portão 2"']])
 
   // motorista -> passageiro; mensagem antiga (antes da corrida) e de outro motorista ignoradas
   t.autocab.msgs = [
-    { id: 1, motoristaId: 42, texto: 'chego em 3 min', recebidaEm: new Date() },
+    { id: 1, motoristaId: 42, texto: 'P: chego em 3 min', recebidaEm: new Date() },
+    { id: 4, motoristaId: 42, texto: 'preciso falar com o escritório', recebidaEm: new Date() }, // para a central
     { id: 2, motoristaId: 42, texto: 'velha', recebidaEm: new Date(0) },
     { id: 3, motoristaId: 99, texto: 'outro', recebidaEm: new Date() },
   ]
@@ -178,7 +190,7 @@ test('fluxo completo', async () => {
   assert.equal(estado.status, 'Motorista indo até você')
   const depois = new Date(Date.now() + 1000)
   t.autocab.msgs.push(
-    { id: 11, motoristaId: 77, texto: 'sou o Bruno, a caminho', recebidaEm: depois },
+    { id: 11, motoristaId: 77, texto: 'P: sou o Bruno, a caminho', recebidaEm: depois },
     { id: 12, motoristaId: 42, texto: 'do antigo', recebidaEm: depois },
   )
   await t.casos.repassarMensagensMotoristas()
