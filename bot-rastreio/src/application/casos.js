@@ -3,22 +3,23 @@
 // autocab:  corridasAbertas() -> [{ id }]
 //           detalhes(id) -> { nome, telefone, motorista: { id, nome } | null, veiculo, placa, origem, destino, previsao, status }
 //           linkRastreio(id) -> url MobilyTrack
+//           localizacaoVeiculo(id) -> { lat, lon } | null,  rota(a, b, resumo) -> { pontos, duracao } | null
 //           mensagensMotoristas() -> [{ id, motoristaId, texto, recebidaEm: Date }]
-//           enviarAoMotorista(motoristaId, texto), fotoMotorista(motoristaId) -> { bytes, tipo } | null
+//           enviarAoVeiculo(veiculoId, texto), fotoMotorista(motoristaId) -> { bytes, tipo } | null
 // whatsapp: enviar(telefone, texto)
 // repo:     bookingsExistentes(ids) -> Set, criarCorrida(c) -> corrida | null, apagarCorrida(id), ativas(),
 //           finalizar(id), trocarMotorista(id, motoristaId | null), porToken(token),
 //           salvarMensagem(m) -> bool (false = duplicada), apagarMensagem(externoId),
 //           mensagens(corridaId, depoisDoId) -> [{ id, origem, texto, criado_em }]
 import {
-  normalizarTelefone, gerarToken, textoBoasVindas, paraMotorista, paraPassageiro, corridaDoTelefone, statusParaPassageiro,
+  normalizarTelefone, gerarToken, textoBoasVindas, paraMotorista, corridaDoTelefone, statusParaPassageiro,
 } from '../domain/corrida.js'
 
 export function criarCasos({ autocab, whatsapp, repo, baseUrl, log = console }) {
   // Estado vivo de cada corrida ativa, atualizado a cada ciclo: status do Autocab e desde quando o motorista atual
   // está nela (mensagens dele anteriores a isso não são desta corrida).
   // ponytail: em memória, vale para 1 instância; após reiniciar, volta em 1 ciclo (e ignora msgs do período parado).
-  const estado = new Map() // corrida.id -> { status, desde: Date }
+  const estado = new Map() // corrida.id -> { status, desde: Date, rota }
   const inicio = new Date()
   const desdeDe = c => estado.get(c.id)?.desde ?? new Date(Math.max(inicio, new Date(c.criado_em)))
 
@@ -76,12 +77,17 @@ export function criarCasos({ autocab, whatsapp, repo, baseUrl, log = console }) 
       desde = new Date()
       log.info(`corrida ${c.autocab_booking}: motorista ${novo ?? 'retirado, buscando outro'}`)
     }
-    const e = { status: statusParaPassageiro(d.status, Boolean(novo)), desde }
+    const e = estado.get(c.id) ?? {} // mantém a rota já calculada
+    e.status = statusParaPassageiro(d.status, Boolean(novo))
+    e.desde = desde
+    e.veiculoId = d.veiculoId
+    e.origemCoord = d.origemCoord
+    e.destinoCoord = d.destinoCoord
     estado.set(c.id, e)
     return e
   }
 
-  // Motorista -> passageiro: o que o motorista manda pelo PDA chega no chat e no WhatsApp como "Motorista: ...".
+  // Motorista -> passageiro: o que o motorista manda para a central entra só no chat da página, não no WhatsApp.
   async function repassarMensagensMotoristas() {
     const ativas = await repo.ativas()
     if (!ativas.length) return
@@ -90,14 +96,7 @@ export function criarCasos({ autocab, whatsapp, repo, baseUrl, log = console }) 
     for (const m of await autocab.mensagensMotoristas()) {
       const c = porMotorista.get(String(m.motoristaId))
       if (!c || !m.texto || m.recebidaEm < desdeDe(c)) continue
-      const externoId = `autocab:${m.id}`
-      if (!(await repo.salvarMensagem({ corridaId: c.id, origem: 'MOTORISTA', texto: m.texto, externoId }))) continue
-      try {
-        await whatsapp.enviar(c.telefone, paraPassageiro(m.texto))
-      } catch (e) {
-        await repo.apagarMensagem(externoId) // reenvia no próximo ciclo
-        log.error(`mensagem ${externoId}:`, e.message)
-      }
+      await repo.salvarMensagem({ corridaId: c.id, origem: 'MOTORISTA', texto: m.texto, externoId: `autocab:${m.id}` })
     }
   }
 
@@ -106,7 +105,15 @@ export function criarCasos({ autocab, whatsapp, repo, baseUrl, log = console }) 
   async function doCliente(c, texto, externoId) {
     if (!c.motorista_id) return log.info(`corrida ${c.autocab_booking}: mensagem sem motorista designado, ignorada`)
     if (!(await repo.salvarMensagem({ corridaId: c.id, origem: 'CLIENTE', texto, externoId }))) return
-    await autocab.enviarAoMotorista(c.motorista_id, paraMotorista(texto)).catch(e => log.error('envio ao motorista:', e.message))
+    try {
+      // o id do veículo vem do ciclo; se a página chegou antes do primeiro ciclo, busca na hora
+      const veiculoId = estado.get(c.id)?.veiculoId ?? (await autocab.detalhes(c.autocab_booking)).veiculoId
+      if (!veiculoId) throw new Error('corrida sem veículo designado')
+      await autocab.enviarAoVeiculo(veiculoId, paraMotorista(texto))
+      log.info(`corrida ${c.autocab_booking}: mensagem entregue ao veículo ${veiculoId}`)
+    } catch (e) {
+      log.error(`corrida ${c.autocab_booking}: falha ao enviar ao veículo:`, e.message)
+    }
   }
 
   // Chat da página. Retorna 'ok' | 'vazia' | 'encerrada' | 'sem-motorista'.
@@ -139,6 +146,37 @@ export function criarCasos({ autocab, whatsapp, repo, baseUrl, log = console }) 
     await doCliente(c, texto, externoId)
   }
 
+  // Posição atual do carro + ETA: { lat, lon, etaSeg } ou null (sem veículo / corrida encerrada).
+  // O ETA é o tempo pelas ruas do carro até o embarque (ou até o destino, com o passageiro a bordo).
+  async function veiculo(token) {
+    const c = await ativaPorToken(token)
+    if (!c) return null
+    const pos = await autocab.localizacaoVeiculo(c.autocab_booking)
+    if (!pos) return null
+    return { ...pos, etaSeg: await eta(c, pos) }
+  }
+
+  // ponytail: recalcula no máximo a cada 30s por corrida, para não martelar o OSRM a cada consulta da página.
+  async function eta(c, pos) {
+    const e = estado.get(c.id)
+    if (!e) return null
+    if (e.eta && Date.now() - e.eta.em < 30000) return e.eta.seg
+    const alvo = e.status === 'Em viagem' ? e.destinoCoord : e.origemCoord
+    const r = await autocab.rota(pos, alvo, true).catch(erro => (log.error('eta:', erro.message), null))
+    e.eta = { seg: r?.duracao ?? null, em: Date.now() }
+    return e.eta.seg
+  }
+
+  // Trajeto embarque -> destino. Calculado uma vez por corrida: não muda durante a viagem.
+  async function rotaDaCorrida(c, d) {
+    const e = estado.get(c.id) ?? {}
+    if ('rota' in e) return e.rota
+    const r = await autocab.rota(d.origemCoord, d.destinoCoord).catch(erro => (log.error('rota:', erro.message), null))
+    e.rota = r?.pontos ?? null
+    estado.set(c.id, e)
+    return e.rota
+  }
+
   // Foto do motorista da corrida: { bytes, tipo } ou null (sem foto / sem motorista / corrida encerrada).
   async function fotoMotorista(token) {
     const c = await ativaPorToken(token)
@@ -161,10 +199,10 @@ export function criarCasos({ autocab, whatsapp, repo, baseUrl, log = console }) 
       autocab.linkRastreio(c.autocab_booking).catch(e => (log.error(e), null)),
     ])
     const { status } = await aplicarDetalhes(c, d)
-    return { ...d, link, token, statusTexto: status }
+    return { ...d, link, token, statusTexto: status, rota: await rotaDaCorrida(c, d) }
   }
 
   return {
-    sincronizarCorridas, repassarMensagensMotoristas, mensagemPassageiro, chatEnviar, chatListar, fotoMotorista, paginaRastreio,
+    sincronizarCorridas, repassarMensagensMotoristas, mensagemPassageiro, chatEnviar, chatListar, fotoMotorista, veiculo, paginaRastreio,
   }
 }

@@ -55,7 +55,13 @@ letter-spacing:.04em;color:var(--acento-texto)}
 .mapa{position:relative;width:124px;height:124px;border-radius:18px;overflow:hidden;border:1px solid var(--borda);
 background:#1c1c1c;box-shadow:var(--brilho)}
 /* miniatura = MobilyTrack renderizado em 320px e reduzido; ao expandir volta ao tamanho real */
-.mapa iframe{width:320px;height:320px;border:0;display:block;pointer-events:none;transform:scale(.3875);transform-origin:0 0}
+.mapa-tela{width:100%;height:100%;background:#0f0f0f}
+/* modo noturno do mapa: inverte e dessatura os tiles; o trajeto e os marcadores ficam por cima, sem filtro */
+.mapa-tela .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.92) contrast(.95) saturate(.55)}
+.mapa-tela .leaflet-control-attribution{font-size:9px;background:rgba(0,0,0,.6);color:var(--suave)}
+.mapa-tela .leaflet-control-attribution a{color:var(--suave)}
+.carro{display:grid;place-items:center;width:26px;height:26px;border-radius:50%;font-size:15px;
+background:var(--acento);box-shadow:0 0 0 3px rgba(0,0,0,.45),var(--brilho)}
 .mapa .sem-mapa{height:100%;display:grid;place-items:center;align-content:center;gap:4px;text-align:center;
 color:var(--suave);font-size:11px;padding:8px}
 .mapa .sem-mapa svg{color:var(--acento-texto)}
@@ -65,7 +71,6 @@ font-size:9px;font-weight:800;letter-spacing:.14em;color:var(--acento-texto);bac
 .vivo .ponto{width:6px;height:6px}
 .fechar-mapa{display:none}
 body.mapa-aberto .mapa{position:fixed;inset:0;z-index:20;width:auto;height:auto;border-radius:0;border:0}
-body.mapa-aberto .mapa iframe{width:100%;height:100%;transform:none;pointer-events:auto}
 body.mapa-aberto .toque{display:none}
 body.mapa-aberto .fechar-mapa{display:flex;align-items:center;gap:8px;position:fixed;z-index:21;
 top:calc(12px + env(safe-area-inset-top));right:12px;padding:10px 14px;border-radius:12px;font-weight:700;font-size:14px;
@@ -75,6 +80,7 @@ border:1px solid var(--borda);background:rgba(0,0,0,.85);color:var(--acento-text
 .status span{font-weight:700}
 .status small{display:block;color:#e0e0e0;font-size:11.5px;margin-top:2px}
 .status small em{font:700 12px var(--mono);font-style:normal;color:var(--acento-texto)}
+.status small[hidden]{display:none}
 
 /* chat: ocupa o resto da tela */
 .chat{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
@@ -175,11 +181,65 @@ form.onsubmit = async e => {
   }
 }
 
-// Mapa: a mesma iframe cresce para tela cheia (não recarrega o MobilyTrack).
+// Mapa próprio: trajeto pelas ruas + carro, com a posição que o Autocab informa a cada 10s.
 const abrir = document.getElementById('abrir-mapa'), fechar = document.getElementById('fechar-mapa')
-if (abrir) {
-  abrir.onclick = () => { document.body.classList.add('mapa-aberto'); fechar.focus() }
-  fechar.onclick = () => { document.body.classList.remove('mapa-aberto'); abrir.focus() }
+const dados = document.getElementById('dados-mapa')
+if (abrir && dados && window.L) {
+  const { rota, origem, destino } = JSON.parse(dados.textContent)
+  const mapa = L.map('mapa', { zoomControl: false, attributionControl: true })
+  // OpenStreetMap (sem chave) escurecido por filtro CSS, para combinar com a página
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(mapa)
+
+  const pontos = []
+  if (rota && rota.length > 1) {
+    L.polyline(rota, { color: '#ff3b30', weight: 5, opacity: .95 }).addTo(mapa)
+    pontos.push(...rota)
+  } else if (origem && destino) { // OSRM fora do ar: liga os dois pontos em linha tracejada
+    L.polyline([[origem.lat, origem.lon], [destino.lat, destino.lon]], { color: '#ff3b30', weight: 3, dashArray: '6 8' }).addTo(mapa)
+  }
+  const ponta = (p, cor, titulo) => {
+    if (!p) return
+    L.circleMarker([p.lat, p.lon], { radius: 7, color: '#fff', weight: 2, fillColor: cor, fillOpacity: 1 })
+      .addTo(mapa).bindPopup(titulo)
+    pontos.push([p.lat, p.lon])
+  }
+  ponta(origem, '#fff', 'Embarque')
+  ponta(destino, '#ff3b30', 'Destino')
+  if (pontos.length) mapa.fitBounds(L.latLngBounds(pontos).pad(.25))
+  else mapa.setView([-14.24, -51.93], 3)
+
+  const eta = document.getElementById('eta'), etaHora = document.getElementById('eta-hora'), etaMin = document.getElementById('eta-min')
+  let carro = null
+  async function posicao() {
+    try {
+      const r = await fetch(location.pathname.replace(/\\/$/, '') + '/veiculo', { cache: 'no-store' })
+      if (!r.ok) return
+      const { lat, lon, etaSeg } = await r.json()
+      if (etaSeg > 0) {
+        const min = Math.max(1, Math.round(etaSeg / 60))
+        const chegada = new Date(Date.now() + etaSeg * 1000)
+        eta.hidden = false
+        etaHora.textContent = chegada.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+        etaMin.textContent = ' · ' + min + ' min'
+      }
+      const primeira = !carro
+      if (!carro) {
+        carro = L.marker([lat, lon], { icon: L.divIcon({ className: '', html: '<div class="carro">🚗</div>', iconSize: [26, 26] }) }).addTo(mapa)
+      } else carro.setLatLng([lat, lon])
+      if (primeira) mapa.fitBounds(L.latLngBounds([...pontos, [lat, lon]]).pad(.25))
+    } catch {}
+  }
+  posicao()
+  setInterval(posicao, 10000)
+
+  // o mapa só sabe o novo tamanho depois que o navegador aplica o layout: por isso o requestAnimationFrame
+  const reenquadrar = () => requestAnimationFrame(() => {
+    mapa.invalidateSize()
+    const tudo = carro ? [...pontos, carro.getLatLng()] : pontos
+    if (tudo.length) mapa.fitBounds(L.latLngBounds(tudo).pad(.15))
+  })
+  abrir.onclick = () => { document.body.classList.add('mapa-aberto'); reenquadrar(); fechar.focus() }
+  fechar.onclick = () => { document.body.classList.remove('mapa-aberto'); reenquadrar(); abrir.focus() }
   addEventListener('keydown', e => { if (e.key === 'Escape' && document.body.classList.contains('mapa-aberto')) fechar.click() })
 }
 
@@ -213,7 +273,10 @@ function layout({ corpo, script = '', motorista = '' }) {
   return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
 <meta name="theme-color" content="#2e2e2e"><meta name="robots" content="noindex"><meta name="referrer" content="no-referrer">
-<title>Rastreio do veículo</title><style>${CSS}</style></head><body data-motorista="${esc(motorista)}"><main>
+<title>Rastreio do veículo</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>${CSS}</style></head><body data-motorista="${esc(motorista)}"><main>
 ${corpo}</main>${script ? `<script>${script}</script>` : ''}</body></html>`
 }
 
@@ -233,14 +296,17 @@ export function renderPagina(d, { agora } = {}) {
   const m = d.motorista ?? {}
   const buscando = !m.id // central retirou o motorista e ainda não designou outro
   const nomeMotorista = buscando ? 'Buscando motorista' : m.nome || 'Motorista'
-  const mapa = d.link
+  const temMapa = Boolean(d.origemCoord || d.destinoCoord)
+  const dadosMapa = { rota: d.rota, origem: d.origemCoord, destino: d.destinoCoord }
+  const mapa = temMapa
     ? `<p class="dica" aria-hidden="true">${ICONE_EXPANDIR}Rastreio do veículo</p>
 <div class="mapa">
-  <iframe src="${esc(d.link)}" title="Rastreio do veículo em tempo real" loading="eager" allow="geolocation"></iframe>
+  <div class="mapa-tela" id="mapa"></div>
   <span class="vivo"><i class="ponto"></i>AO VIVO</span>
   <button class="toque" id="abrir-mapa" type="button" aria-label="Abrir rastreio do veículo em tela cheia"></button>
 </div>
-<button class="fechar-mapa" id="fechar-mapa" type="button">✕ Fechar mapa</button>`
+<button class="fechar-mapa" id="fechar-mapa" type="button">✕ Fechar mapa</button>
+<script type="application/json" id="dados-mapa">${JSON.stringify(dadosMapa).replace(/</g, '\u003c')}</script>`
     : `<p class="dica">Rastreio do veículo</p>
 <div class="mapa"><div class="sem-mapa">${ICONE_PINO}Disponível em instantes</div></div>`
 
@@ -266,7 +332,7 @@ export function renderPagina(d, { agora } = {}) {
   <div class="lado">
     ${mapa}
     <p class="status" aria-live="polite"><b>Status</b><span id="status-texto">${esc(d.statusTexto ?? 'Motorista indo até você')}</span>
-      ${d.previsao && !buscando ? `<small>Chega às <em>${esc(hora(d.previsao))}</em></small>` : ''}</p>
+      <small id="eta"${d.previsao && !buscando ? '' : ' hidden'}>Chega às <em id="eta-hora">${d.previsao && !buscando ? esc(hora(d.previsao)) : ''}</em><span id="eta-min"></span></small></p>
   </div>
 </section>
 <section class="card chat" aria-label="Chat com o motorista">
