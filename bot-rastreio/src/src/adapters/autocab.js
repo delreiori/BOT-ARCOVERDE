@@ -1,6 +1,7 @@
 // Adapter de saída: Autocab Ghost API (booking.json + driver.yaml).
 const BOOKING = 'https://autocab-api.azure-api.net/booking/v1'
 const DRIVER = 'https://autocab-api.azure-api.net/driver/v1'
+const VEHICLE = 'https://autocab-api.azure-api.net/vehicle/v1'
 // ponytail: OSRM público (uso leve) só para desenhar o trajeto; se cair, a página liga os pontos em linha reta.
 // Trocar por OSRM próprio ou Mapbox se o volume crescer.
 const OSRM = 'https://router.project-osrm.org/route/v1/driving'
@@ -56,6 +57,7 @@ export function criarAutocab({ chave }) {
         telefone: b.telephoneNumber ?? '',
         motorista: m.id ? { id: String(m.id), nome: m.forename || m.fullName || '' } : null,
         veiculo: [v.make, v.model, v.colour].filter(Boolean).join(' · '),
+        veiculoId: v.id ? String(v.id) : null,
         placa: v.registration || v.plateNumber || '',
         origem: b.pickup?.address?.text ?? '',
         destino: b.destination?.address?.text ?? '',
@@ -119,15 +121,17 @@ export function criarAutocab({ chave }) {
       return { bytes, tipo: bytes[0] === 0x89 && bytes[1] === 0x50 ? 'image/png' : 'image/jpeg' }
     },
 
-    // "Send Driver Text Message" (driver.yaml): a central manda texto para o celular cadastrado do motorista.
-    // ponytail: busca o celular a cada envio (2 chamadas); guardar na corrida se o volume de chat crescer.
-    async enviarAoMotorista(motoristaId, texto) {
-      const { mobile } = await req(`${BOOKING}/drivers/${encodeURIComponent(motoristaId)}`)
-      if (!mobile) throw new Error(`motorista ${motoristaId} sem celular cadastrado no Autocab`)
-      await req(`${DRIVER}/textmessage`, {
+    // "Send Message to Vehicle(s)" (vehicle.yaml): cai na caixa de mensagens da central dentro do PDA.
+    // (O /driver/v1/textmessage manda SMS para o celular do motorista, não serve aqui.)
+    async enviarAoVeiculo(veiculoId, texto) {
+      const r = await req(`${VEHICLE}/vehicles/message`, {
         method: 'POST',
-        body: JSON.stringify({ Recipients: [mobile], Message: texto }),
+        body: JSON.stringify({ text: texto, vehicles: [Number(veiculoId)], companies: [], capabilities: [], zones: [] }),
       })
+      const fora = r?.vehicles?.nonWorkingVehicles ?? []
+      if (fora.length && !(r?.vehicles?.workingVehicles ?? []).length) {
+        throw new Error(`veículo ${veiculoId} fora de turno: mensagem não entregue`)
+      }
     },
   }
 }

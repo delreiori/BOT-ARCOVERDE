@@ -5,7 +5,7 @@
 //           linkRastreio(id) -> url MobilyTrack
 //           localizacaoVeiculo(id) -> { lat, lon } | null,  rota(a, b, resumo) -> { pontos, duracao } | null
 //           mensagensMotoristas() -> [{ id, motoristaId, texto, recebidaEm: Date }]
-//           enviarAoMotorista(motoristaId, texto), fotoMotorista(motoristaId) -> { bytes, tipo } | null
+//           enviarAoVeiculo(veiculoId, texto), fotoMotorista(motoristaId) -> { bytes, tipo } | null
 // whatsapp: enviar(telefone, texto)
 // repo:     bookingsExistentes(ids) -> Set, criarCorrida(c) -> corrida | null, apagarCorrida(id), ativas(),
 //           finalizar(id), trocarMotorista(id, motoristaId | null), porToken(token),
@@ -80,6 +80,7 @@ export function criarCasos({ autocab, whatsapp, repo, baseUrl, log = console }) 
     const e = estado.get(c.id) ?? {} // mantém a rota já calculada
     e.status = statusParaPassageiro(d.status, Boolean(novo))
     e.desde = desde
+    e.veiculoId = d.veiculoId
     e.origemCoord = d.origemCoord
     e.destinoCoord = d.destinoCoord
     estado.set(c.id, e)
@@ -105,10 +106,13 @@ export function criarCasos({ autocab, whatsapp, repo, baseUrl, log = console }) 
     if (!c.motorista_id) return log.info(`corrida ${c.autocab_booking}: mensagem sem motorista designado, ignorada`)
     if (!(await repo.salvarMensagem({ corridaId: c.id, origem: 'CLIENTE', texto, externoId }))) return
     try {
-      await autocab.enviarAoMotorista(c.motorista_id, paraMotorista(texto))
-      log.info(`corrida ${c.autocab_booking}: mensagem entregue ao motorista ${c.motorista_id}`)
+      // o id do veículo vem do ciclo; se a página chegou antes do primeiro ciclo, busca na hora
+      const veiculoId = estado.get(c.id)?.veiculoId ?? (await autocab.detalhes(c.autocab_booking)).veiculoId
+      if (!veiculoId) throw new Error('corrida sem veículo designado')
+      await autocab.enviarAoVeiculo(veiculoId, paraMotorista(texto))
+      log.info(`corrida ${c.autocab_booking}: mensagem entregue ao veículo ${veiculoId}`)
     } catch (e) {
-      log.error(`corrida ${c.autocab_booking}: falha ao enviar ao motorista ${c.motorista_id}:`, e.message)
+      log.error(`corrida ${c.autocab_booking}: falha ao enviar ao veículo:`, e.message)
     }
   }
 
