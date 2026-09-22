@@ -50,6 +50,12 @@ export function criarServidor({ casos, segredo, log = console }) {
         return res.writeHead(200, { 'Content-Type': f.tipo, 'Cache-Control': 'private, max-age=3600' }).end(f.bytes)
       }
 
+      const veic = url.pathname.match(/^\/r\/([0-9A-Za-z]{6,32})\/veiculo$/)
+      if (veic && req.method === 'GET') {
+        const v = await casos.veiculo(veic[1])
+        return v ? json(200, v) : json(404, { erro: 'sem posição' })
+      }
+
       const rota = url.pathname.match(/^\/r\/([0-9A-Za-z]{6,32})(\/mensagens)?$/)
       if (rota && !rota[2] && req.method === 'GET') {
         const dados = await casos.paginaRastreio(rota[1])
