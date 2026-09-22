@@ -3,7 +3,8 @@
 import pg from 'pg'
 
 export function criarRepo(connectionString) {
-  const db = new pg.Pool({ connectionString, max: 5 })
+    // Sem timeout, um banco inalcançável trava a página e o ciclo sem nenhum erro no log.
+  const db = new pg.Pool({ connectionString, max: 5, connectionTimeoutMillis: 10000, query_timeout: 15000 })
   const q = (sql, params) => db.query(sql, params).then(r => r.rows)
   const agora = () => new Date().toISOString()
 
