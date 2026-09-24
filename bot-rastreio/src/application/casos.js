@@ -90,31 +90,21 @@ export function criarCasos({ autocab, whatsapp, repo, baseUrl, segredo, log = co
     return e
   }
 
-  // Avisa o veículo de que existe um passageiro no chat e como responder a ele.
+  // O motorista recebe o link do chat direto no PDA (caixa da central). WhatsApp é só do passageiro.
   // ponytail: o controle de "já avisei" é em memória; após reiniciar o bot, o aviso pode repetir uma vez.
   async function instruirMotorista(c, d) {
     const e = estado.get(c.id) ?? {}
     const marca = `${d.veiculoId}:${d.motorista?.id}`
-    if (e.avisado === marca) return
+    if (!d.veiculoId || e.avisado === marca) return
     e.avisado = marca
     estado.set(c.id, e)
-    const texto = textoInstrucaoMotorista({
-      nome: c.nome_cliente ?? d.nome, booking: c.autocab_booking, link: `${baseUrl}/m/${tokenMotorista(c.token, segredo)}`,
-    })
-
-    if (d.motorista?.id) {
-      try {
-        const celular = normalizarTelefone(await autocab.celularMotorista(d.motorista.id))
-        if (!celular) throw new Error('motorista sem celular no cadastro do Autocab')
-        await whatsapp.enviar(celular, texto)
-        log.info(`corrida ${c.autocab_booking}: link do chat enviado ao motorista ${d.motorista.id}`)
-      } catch (erro) {
-        log.error(`corrida ${c.autocab_booking}: falha ao mandar o link ao motorista:`, erro.message)
-      }
-    }
-    if (d.veiculoId) {
-      await autocab.enviarAoVeiculo(d.veiculoId, texto)
-        .catch(erro => log.error(`corrida ${c.autocab_booking}: falha ao avisar o veículo:`, erro.message))
+    try {
+      await autocab.enviarAoVeiculo(d.veiculoId, textoInstrucaoMotorista({
+        nome: c.nome_cliente ?? d.nome, booking: c.autocab_booking, link: `${baseUrl}/m/${tokenMotorista(c.token, segredo)}`,
+      }))
+      log.info(`corrida ${c.autocab_booking}: link do chat enviado ao PDA do veículo ${d.veiculoId}`)
+    } catch (erro) {
+      log.error(`corrida ${c.autocab_booking}: falha ao mandar o link ao veículo ${d.veiculoId}:`, erro.message)
     }
   }
 

@@ -44,15 +44,9 @@ export function respostaAoPassageiro(texto) {
 }
 
 export const textoInstrucaoMotorista = ({ nome, booking, link }) =>
-  `🚖 Corrida ${booking}${nome ? ` · passageiro ${primeiroNome(nome)}` : ''}
-
-` +
-  `Fale com o passageiro por aqui:
-${link}
-
-` +
-  `Pelo PDA também dá: comece a mensagem com P: (exemplo: P: chego em 5 minutos). ` +
-  `Mensagens sem P: vão só para a central.`
+  `Corrida ${booking}${nome ? ` · passageiro ${primeiroNome(nome)}` : ''}. ` +
+  `Abra o chat com o passageiro: ${link} ` +
+  `Ou responda por aqui começando com P: (exemplo: P: chego em 5 minutos). Sem o P:, a mensagem vai só para a central.`
 
 // Status do Autocab (activeBooking.status) em texto para o passageiro. Sem motorista = buscando.
 // ponytail: a doc não lista os valores de status; traduz por palavra-chave e mostra o resto como veio.
