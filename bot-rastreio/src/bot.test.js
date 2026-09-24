@@ -47,15 +47,12 @@ function montar() {
   const corridas = [], mensagens = [], enviados = [], aoMotorista = []
   let seq = 0, falharWhats = false
   const booking = { id: 700, nome: 'Ana Souza', telefone: '11 99999-8888', motorista: null, veiculo: 'Corolla', placa: 'ABC1D23', status: '',
-    origemCoord: { lat: -23.43, lon: -46.47 }, destinoCoord: { lat: -23.56, lon: -46.65 }, veiculoId: '77' }
+veiculoId: '77' }
   const autocab = {
     abertas: [{ id: 700 }],
     corridasAbertas: async () => autocab.abertas,
     detalhes: async () => ({ ...booking }),
     linkRastreio: async () => 'https://tr.ac.cab/x',
-    rotas: 0,
-    rota: async (a, b, resumo) => { autocab.rotas++; return { pontos: resumo ? null : [[a.lat, a.lon], [-23.5, -46.5], [b.lat, b.lon]], duracao: 780 } },
-    localizacaoVeiculo: async () => ({ lat: -23.5, lon: -46.6 }),
     msgs: [],
     mensagensMotoristas: async () => autocab.msgs,
     enviarAoVeiculo: async (id, t) => aoMotorista.push([id, t]),
@@ -144,16 +141,7 @@ test('fluxo completo', async () => {
   assert.match(html, /Rastreio do veículo/)
   assert.doesNotMatch(html, /Safety Transfers/)
   assert.match(html, new RegExp(`/r/${t.corridas[0].token}/foto`))
-  // mapa próprio: trajeto embutido na página, calculado uma vez só por corrida
-  assert.match(html, /id="dados-mapa"/)
-  assert.match(html, /\[\[-23.43,-46.47\],\[-23.5,-46.5\],\[-23.56,-46.65\]\]/)
-  assert.equal(t.autocab.rotas, 1)
-  await t.casos.paginaRastreio(t.corridas[0].token)
-  assert.equal(t.autocab.rotas, 1, 'rota não é recalculada a cada abertura da página')
-  assert.deepEqual(await t.casos.veiculo(t.corridas[0].token), { lat: -23.5, lon: -46.6, etaSeg: 780 })
-  const chamadas = t.autocab.rotas
-  await t.casos.veiculo(t.corridas[0].token)
-  assert.equal(t.autocab.rotas, chamadas, 'ETA reaproveitado por 30s, não recalcula a cada consulta')
+  assert.match(html, /tr\.ac\.cab/) // mapa do Autocab embutido na página
   // o script que vai para o navegador precisa ser JS válido (quebra de linha perdida num '\n' já quebrou isso)
   assert.doesNotThrow(() => new Function(html.match(/<script>([\s\S]*)<\/script>/)[1]))
   // compartilhar envia o MobilyTrack (só mapa), nunca o link do chat
@@ -225,7 +213,6 @@ test('fluxo completo', async () => {
   await t.casos.sincronizarCorridas()
   assert.equal((await t.casos.paginaRastreio(t.corridas[0].token)).encerrada, true)
   assert.equal(await t.casos.chatListar(t.corridas[0].token), null)
-  assert.equal(await t.casos.veiculo(t.corridas[0].token), null) // encerrada não expõe a posição
   assert.equal(await t.casos.fotoMotorista(t.corridas[0].token), null) // corrida encerrada não expõe a foto
 })
 

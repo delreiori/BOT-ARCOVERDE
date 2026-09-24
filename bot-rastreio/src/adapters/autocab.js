@@ -2,15 +2,7 @@
 const BOOKING = 'https://autocab-api.azure-api.net/booking/v1'
 const DRIVER = 'https://autocab-api.azure-api.net/driver/v1'
 const VEHICLE = 'https://autocab-api.azure-api.net/vehicle/v1'
-// ponytail: OSRM público (uso leve) só para desenhar o trajeto; se cair, a página liga os pontos em linha reta.
-// Trocar por OSRM próprio ou Mapbox se o volume crescer.
-const OSRM = 'https://router.project-osrm.org/route/v1/driving'
 const HORA = 3600e3
-
-const coord = ponto => {
-  const c = ponto?.address?.coordinate
-  return c && !c.isEmpty ? { lat: c.latitude, lon: c.longitude } : null
-}
 
 export function criarAutocab({ chave }) {
   async function req(url, opts = {}) {
@@ -61,35 +53,9 @@ export function criarAutocab({ chave }) {
         placa: v.registration || v.plateNumber || '',
         origem: b.pickup?.address?.text ?? '',
         destino: b.destination?.address?.text ?? '',
-        origemCoord: coord(b.pickup),
-        destinoCoord: coord(b.destination),
         previsao: previsao && !previsao.startsWith('0001') ? previsao : null,
         status: b.activeBooking?.status ?? '',
       }
-    },
-
-    // Posição atual do veículo da corrida; 404 = ainda não despachado, ou já encerrada.
-    async localizacaoVeiculo(bookingId) {
-      const r = await fetch(`${BOOKING}/vehicleLocation?bookingId=${encodeURIComponent(bookingId)}`, {
-        headers: { 'Ocp-Apim-Subscription-Key': chave },
-        signal: AbortSignal.timeout(15000),
-      })
-      if (r.status === 404) return null
-      if (!r.ok) throw new Error(`Autocab ${r.status} localização do veículo ${bookingId}`)
-      const { location, heading, received } = await r.json()
-      return location && !location.isEmpty ? { lat: location.latitude, lon: location.longitude, heading, received } : null
-    },
-
-    // Trajeto pelas ruas: { pontos: [[lat, lon], ...], duracao: segundos }. null = sem coordenadas.
-    // `resumo` pede só o tempo (usado no ETA, que recalcula com o carro andando).
-    async rota(a, b, resumo = false) {
-      if (!a || !b) return null
-      const geo = resumo ? 'overview=false' : 'overview=full&geometries=geojson'
-      const r = await fetch(`${OSRM}/${a.lon},${a.lat};${b.lon},${b.lat}?${geo}`, { signal: AbortSignal.timeout(15000) })
-      if (!r.ok) throw new Error(`OSRM ${r.status}`)
-      const rota = (await r.json()).routes?.[0]
-      if (!rota) return null
-      return { pontos: rota.geometry?.coordinates?.map(([lon, lat]) => [lat, lon]) ?? null, duracao: rota.duration }
     },
 
     async linkRastreio(id) {

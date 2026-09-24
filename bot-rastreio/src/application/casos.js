@@ -3,7 +3,6 @@
 // autocab:  corridasAbertas() -> [{ id }]
 //           detalhes(id) -> { nome, telefone, motorista: { id, nome } | null, veiculo, placa, origem, destino, previsao, status }
 //           linkRastreio(id) -> url MobilyTrack
-//           localizacaoVeiculo(id) -> { lat, lon } | null,  rota(a, b, resumo) -> { pontos, duracao } | null
 //           mensagensMotoristas() -> [{ id, motoristaId, texto, recebidaEm: Date }]
 //           enviarAoVeiculo(veiculoId, texto), fotoMotorista(motoristaId) -> { bytes, tipo } | null
 // whatsapp: enviar(telefone, texto)
@@ -20,7 +19,7 @@ export function criarCasos({ autocab, whatsapp, repo, baseUrl, segredo, log = co
   // Estado vivo de cada corrida ativa, atualizado a cada ciclo: status do Autocab e desde quando o motorista atual
   // está nela (mensagens dele anteriores a isso não são desta corrida).
   // ponytail: em memória, vale para 1 instância; após reiniciar, volta em 1 ciclo (e ignora msgs do período parado).
-  const estado = new Map() // corrida.id -> { status, desde: Date, rota }
+  const estado = new Map() // corrida.id -> { status, desde: Date, veiculoId }
   const inicio = new Date()
   const desdeDe = c => estado.get(c.id)?.desde ?? new Date(Math.max(inicio, new Date(c.criado_em)))
 
@@ -124,7 +123,6 @@ export function criarCasos({ autocab, whatsapp, repo, baseUrl, segredo, log = co
       token: c.token,
       tokenMotorista: tokenM,
       statusTexto: estado.get(c.id)?.status ?? statusParaPassageiro(d.status, Boolean(c.motorista_id)),
-      rota: await rotaDaCorrida(c, d),
     }
   }
 
@@ -136,13 +134,6 @@ export function criarCasos({ autocab, whatsapp, repo, baseUrl, segredo, log = co
       status: estado.get(c.id)?.status ?? '',
       mensagens: await repo.mensagens(c.id, depois),
     }
-  }
-
-  async function veiculoMotorista(tokenM) {
-    const c = await corridaDoMotorista(tokenM)
-    if (!c) return null
-    const pos = await autocab.localizacaoVeiculo(c.autocab_booking)
-    return pos ? { ...pos, etaSeg: await eta(c, pos) } : null
   }
 
   async function chatMotoristaEnviar(tokenM, texto) {
@@ -215,37 +206,6 @@ export function criarCasos({ autocab, whatsapp, repo, baseUrl, segredo, log = co
     await doCliente(c, texto, externoId)
   }
 
-  // Posição atual do carro + ETA: { lat, lon, etaSeg } ou null (sem veículo / corrida encerrada).
-  // O ETA é o tempo pelas ruas do carro até o embarque (ou até o destino, com o passageiro a bordo).
-  async function veiculo(token) {
-    const c = await ativaPorToken(token)
-    if (!c) return null
-    const pos = await autocab.localizacaoVeiculo(c.autocab_booking)
-    if (!pos) return null
-    return { ...pos, etaSeg: await eta(c, pos) }
-  }
-
-  // ponytail: recalcula no máximo a cada 30s por corrida, para não martelar o OSRM a cada consulta da página.
-  async function eta(c, pos) {
-    const e = estado.get(c.id)
-    if (!e) return null
-    if (e.eta && Date.now() - e.eta.em < 30000) return e.eta.seg
-    const alvo = e.status === 'Em viagem' ? e.destinoCoord : e.origemCoord
-    const r = await autocab.rota(pos, alvo, true).catch(erro => (log.error('eta:', erro.message), null))
-    e.eta = { seg: r?.duracao ?? null, em: Date.now() }
-    return e.eta.seg
-  }
-
-  // Trajeto embarque -> destino. Calculado uma vez por corrida: não muda durante a viagem.
-  async function rotaDaCorrida(c, d) {
-    const e = estado.get(c.id) ?? {}
-    if ('rota' in e) return e.rota
-    const r = await autocab.rota(d.origemCoord, d.destinoCoord).catch(erro => (log.error('rota:', erro.message), null))
-    e.rota = r?.pontos ?? null
-    estado.set(c.id, e)
-    return e.rota
-  }
-
   // Foto do motorista da corrida: { bytes, tipo } ou null (sem foto / sem motorista / corrida encerrada).
   async function fotoMotorista(token) {
     const c = await ativaPorToken(token)
@@ -268,11 +228,11 @@ export function criarCasos({ autocab, whatsapp, repo, baseUrl, segredo, log = co
       autocab.linkRastreio(c.autocab_booking).catch(e => (log.error(e), null)),
     ])
     const { status } = await aplicarDetalhes(c, d)
-    return { ...d, link, token, statusTexto: status, rota: await rotaDaCorrida(c, d) }
+    return { ...d, link, token, statusTexto: status }
   }
 
   return {
-    sincronizarCorridas, repassarMensagensMotoristas, mensagemPassageiro, chatEnviar, chatListar, fotoMotorista, veiculo, paginaRastreio,
-    paginaMotorista, chatMotoristaListar, chatMotoristaEnviar, veiculoMotorista,
+    sincronizarCorridas, repassarMensagensMotoristas, mensagemPassageiro, chatEnviar, chatListar, fotoMotorista, paginaRastreio,
+    paginaMotorista, chatMotoristaListar, chatMotoristaEnviar,
   }
 }

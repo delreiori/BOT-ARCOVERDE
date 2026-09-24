@@ -50,12 +50,6 @@ export function criarServidor({ casos, segredo, log = console }) {
         return res.writeHead(200, { 'Content-Type': f.tipo, 'Cache-Control': 'private, max-age=3600' }).end(f.bytes)
       }
 
-      const veicM = url.pathname.match(/^\/m\/([0-9A-Za-z]{6,32})\/veiculo$/)
-      if (veicM && req.method === 'GET') {
-        const v = await casos.veiculoMotorista(veicM[1])
-        return v ? json(200, v) : json(404, { erro: 'sem posição' })
-      }
-
       // Lado do motorista: /m/{token}, token derivado do da corrida (ver domain/corrida.js)
       const mot = url.pathname.match(/^\/m\/([0-9A-Za-z]{6,32})(\/mensagens)?$/)
       if (mot && !mot[2] && req.method === 'GET') {
@@ -70,12 +64,6 @@ export function criarServidor({ casos, segredo, log = console }) {
         const { texto } = await lerJson(req, 4096)
         const r = await casos.chatMotoristaEnviar(mot[1], texto)
         return json({ ok: 201, vazia: 400, encerrada: 404 }[r], { resultado: r })
-      }
-
-      const veic = url.pathname.match(/^\/r\/([0-9A-Za-z]{6,32})\/veiculo$/)
-      if (veic && req.method === 'GET') {
-        const v = await casos.veiculo(veic[1])
-        return v ? json(200, v) : json(404, { erro: 'sem posição' })
       }
 
       const rota = url.pathname.match(/^\/r\/([0-9A-Za-z]{6,32})(\/mensagens)?$/)
