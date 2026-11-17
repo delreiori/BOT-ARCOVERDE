@@ -58,6 +58,50 @@ export function criarAutocab({ chave }) {
       }
     },
 
+    // --- despacho pela ESCALA (zona) ---
+
+    zonas: () => req(`${BOOKING}/zones`), // [{ id, name, active, ... }]
+
+    // Reservas seguras no despacho (hold), com o objeto completo da reserva.
+    async corridasSeguras() {
+      const agora = Date.now()
+      const { bookings = [] } = await req(`${BOOKING}/1.2/search`, {
+        method: 'POST',
+        body: JSON.stringify({
+          from: new Date(agora - 12 * HORA).toISOString(),
+          to: new Date(agora + 12 * HORA).toISOString(),
+          types: ['Active', 'Dispatched', 'Mobile', 'Advanced', 'ExchangedActive', 'ExchangedMobile'],
+          companyIds: [], capabilities: [], capabilityMatchType: 'Any',
+          exactMatch: false, ignorePostcode: true, ignoreTown: true,
+        }),
+      })
+      return bookings.filter(b => b.hold)
+    },
+
+    corrida: id => req(`${BOOKING}/booking/${encodeURIComponent(id)}`),
+
+    // Fila da zona, em ordem: só veículos livres e sem despacho em andamento.
+    async filaDaZona(zonaId) {
+      const lista = await req(`${VEHICLE}/vehiclestatuses`)
+      return lista
+        .filter(v => v.zoneId === zonaId && !v.dispatchInProgress && String(v.vehicleStatusType ?? '').startsWith('Clear'))
+        .sort((a, b) => (a.queuePosition - b.queuePosition) || (new Date(a.timeEnteredZone) - new Date(b.timeEnteredZone)))
+        .map(v => ({ veiculoId: String(v.id), motoristaId: String(v.driverId), posicao: v.queuePosition, desdeNaZona: v.timeEnteredZone }))
+    },
+
+    // Reserva passa a pedir este motorista. Manda de volta a reserva inteira (o Autocab exige o rowVersion).
+    async direcionarAoMotorista(bookingId, motoristaId) {
+      const b = await req(`${BOOKING}/booking/${encodeURIComponent(bookingId)}`)
+      b.driverConstraints = {
+        requestedDrivers: [Number(motoristaId)],
+        forbiddenDrivers: b.driverConstraints?.forbiddenDrivers ?? [],
+      }
+      await req(`${BOOKING}/booking/${encodeURIComponent(bookingId)}`, { method: 'POST', body: JSON.stringify(b) })
+    },
+
+    // Solta a reserva segura para o despacho.
+    liberar: bookingId => req(`${BOOKING}/release/${encodeURIComponent(bookingId)}`, { method: 'POST' }),
+
     async linkRastreio(id) {
       const { url } = await req(`${BOOKING}/trackingLink/${encodeURIComponent(id)}`)
       return url.startsWith('http') ? url : `https://${url}`
